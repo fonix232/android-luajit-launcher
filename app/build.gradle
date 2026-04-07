@@ -50,6 +50,7 @@ android {
         unitTests.all {
             forkEvery = 1
             maxParallelForks = 8
+            jvmArgs '-Xmx512m'
         }
     }
 
