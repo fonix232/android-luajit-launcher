@@ -47,6 +47,10 @@ android {
     testOptions {
         unitTests.includeAndroidResources = true
         animationsDisabled = true
+        unitTests.all {
+            forkEvery = 1
+            maxParallelForks = 1
+        }
     }
 
     buildTypes {

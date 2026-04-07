@@ -83,7 +83,7 @@ This preserves behaviour while unlocking fast deterministic tests, and the same 
 
 ### 0.3 — Build a golden device matrix
 
-Create a single fixture source containing representative inputs and expected outputs for every supported device family.
+Create a single fixture source containing inputs and expected outputs for every declared device configuration.
 
 Suggested fixture shape:
 
@@ -103,12 +103,15 @@ data class DeviceDetectionCase(
 
 Coverage target:
 
-- At least one case per EPD controller family.
-- At least one case per lights controller family.
+- One explicit case for every `DeviceInfo.Id` value except `NONE`.
+- Every case must assert the resolved device id, EPD controller family, lights controller family, and quirk flags.
+- Keep one additional `NONE` fallback case for an unrecognized device.
+- Also track aggregate coverage so every EPD controller family and every lights controller family is exercised at least once.
 - Every quirk path: `brokenLifecycle`, `needsWakelocks`, `noLights`.
 - Every color-screen path.
-- One unknown/generic fallback device.
 - Cases where current matcher ordering matters.
+
+This matrix should be treated as exhaustive, not representative. If a new `DeviceInfo.Id` is added later, CI should fail until a matching characterization case is added.
 
 ### 0.4 — Write characterization tests against current behaviour
 
