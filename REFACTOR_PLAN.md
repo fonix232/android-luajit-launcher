@@ -58,82 +58,80 @@ Recommended baseline:
 - Robolectric tests: Robolectric + AndroidX Test Core.
 - Instrumentation: AndroidX Test Runner, with Espresso only where real UI interaction matters.
 
-### 0.2 — Make device detection testable before replacing it
+### 0.2 — Make device detection testable without touching production code
 
-The current obstacle to proper unit testing is `DeviceInfo`, which reads `Build.*` statically in a global initializer. Before the full device refactor, introduce the smallest seam possible:
+`DeviceInfo` is a Kotlin `object` that reads `Build.*` fields in its `init` block, effectively a static initializer. There is no seam to inject alternative values at runtime within a single JVM process.
 
-- Create a `BuildSnapshot` data class holding `manufacturer`, `brand`, `model`, `device`, `product`, and `hardware`.
-- Extract the detection logic into a pure function that accepts a `BuildSnapshot` and returns the current device id.
-- Keep `DeviceInfo` as the production adapter that reads `Build.*` and delegates to the pure function.
+The approach that preserves the zero-production-code-change constraint:
+
+- Use **Robolectric** to get Android framework stubs onto the classpath.
+- Override `android.os.Build` fields before `DeviceInfo` initializes using `ReflectionHelpers.setStaticField(Build::class.java, "MANUFACTURER", ...)` (and the same for `BRAND`, `MODEL`, `DEVICE`, `PRODUCT`, `HARDWARE`).
+- Because `DeviceInfo` is a singleton that caches its result on first access, each test class must run in an isolated JVM. This is enforced by `forkEvery = 1` in `testOptions.unitTests.all`.
+
+Shared helper in `DeviceCharacterizationTestSupport.kt`:
 
 ```kotlin
-data class BuildSnapshot(
-     val manufacturer: String,
-     val brand: String,
-     val model: String,
-     val device: String,
-     val product: String,
-     val hardware: String,
-)
-
-internal fun detectDeviceId(build: BuildSnapshot): DeviceInfo.Id
+internal object DeviceCharacterizationTestSupport {
+    fun setBuildFields(manufacturer: String, brand: String, model: String,
+                       device: String, product: String, hardware: String) {
+        ReflectionHelpers.setStaticField(Build::class.java, "MANUFACTURER", manufacturer)
+        ReflectionHelpers.setStaticField(Build::class.java, "BRAND",        brand)
+        ReflectionHelpers.setStaticField(Build::class.java, "MODEL",        model)
+        ReflectionHelpers.setStaticField(Build::class.java, "DEVICE",       device)
+        ReflectionHelpers.setStaticField(Build::class.java, "PRODUCT",      product)
+        ReflectionHelpers.setStaticField(Build::class.java, "HARDWARE",     hardware)
+    }
+}
 ```
 
-This preserves behaviour while unlocking fast deterministic tests, and the same test vectors can later be reused when `DeviceInfo` is replaced by `DeviceRegistry`.
+This approach requires zero seam extraction and zero production code changes. The same `Build` override technique carries forward into Phase 1 tests.
 
 ### 0.3 — Build a golden device matrix
 
-Create a single fixture source containing representative inputs and expected outputs for every supported device family.
+Each `DeviceInfo.Id` value (except `NONE`) maps to a dedicated test class in `app/src/test/java/org/koreader/launcher/device/`. Each class:
 
-Suggested fixture shape:
+- Is annotated `@RunWith(RobolectricTestRunner::class)`.
+- Sets the six `Build` fields in `@Before` via `DeviceCharacterizationTestSupport.setBuildFields(...)`.
+- Asserts `DeviceInfo.ID == DeviceInfo.Id.<EXPECTED>` in a single `@Test`.
+
+Pattern example:
 
 ```kotlin
-data class DeviceDetectionCase(
-     val name: String,
-     val build: BuildSnapshot,
-     val expectedId: DeviceId,
-     val expectedEpdController: KClass<out EPDInterface>,
-     val expectedLightsController: KClass<out LightsInterface>,
-     val expectedHasColorScreen: Boolean,
-     val expectedBrokenLifecycle: Boolean,
-     val expectedNeedsWakelocks: Boolean,
-     val expectedNoLights: Boolean,
-)
+@RunWith(RobolectricTestRunner::class)
+class BoyueT61DeviceIdCaseTest {
+    @Before fun setUp() = DeviceCharacterizationTestSupport.setBuildFields(
+        manufacturer = "boyue", brand = "boyue",
+        model = "t61", device = "t61", product = "t61", hardware = "rk3188"
+    )
+    @Test fun deviceId() = assertThat(DeviceInfo.ID).isEqualTo(DeviceInfo.Id.BOYUE_T61)
+}
 ```
 
-Coverage target:
+Coverage is enforced structurally by `DeviceIdCoverageGuardTest`, which asserts that the set of `DeviceInfo.Id` entries (minus `NONE`) equals the set of IDs declared in that guard. If a new enum value is added without a corresponding test class entry, the guard fails.
 
-- At least one case per EPD controller family.
-- At least one case per lights controller family.
-- Every quirk path: `brokenLifecycle`, `needsWakelocks`, `noLights`.
-- Every color-screen path.
-- One unknown/generic fallback device.
-- Cases where current matcher ordering matters.
+Special-case fixtures are included for precedence-sensitive entries:
+- `BOYUE_T62`: `device=t62` in the `when` chain to distinguish from the rk30sdk fallback.
+- `ONYX_DARWIN5`: `brand=maccentre` tests OR-before-AND precedence.
+- Nook cascade: `NOOK_GL4 → NOOK_GLPLUS → NOOK` ordering.
+- `TOLINO`: generic fallback after all hardware-specific Tolino entries.
 
 ### 0.4 — Write characterization tests against current behaviour
 
-Before changing architecture, add tests that describe what the code does today:
+Tests implemented in `app/src/test/java/org/koreader/launcher/device/`:
 
-1. `DeviceInfoDetectionTest`
-    Verifies `BuildSnapshot -> DeviceId` mapping for the golden matrix.
+1. **121 × `*DeviceIdCaseTest` classes** (one per `DeviceInfo.Id` except `NONE`)
+    Each class runs in a forked JVM, sets `Build` fields, and asserts the resolved `DeviceInfo.ID`.
 
-2. `EpdFactorySelectionTest`
-    Verifies `DeviceId -> EPD controller class` mapping.
+2. **`DeviceIdCoverageGuardTest`**
+    Plain JUnit (no Robolectric needed). Asserts that the declared set of IDs in the guard equals `DeviceInfo.Id.entries.filter { it != NONE }.toSet()`. Fails CI if a new enum value is added without a corresponding test entry.
 
-3. `LightsFactorySelectionTest`
-    Verifies `DeviceId -> lights controller class` mapping.
+3. **`LuaInterfaceContractTest`** (in `org.koreader.launcher`)
+    Reflection-based; freezes all 65 public method signatures on `LuaInterface`. Acts as the safety net for Phase 2 and Phase 3 interface splits.
 
-4. `DeviceFacadeTest`
-    Verifies the public `Device` API remains stable:
-    - `hasEinkSupport`
-    - `hasFullEinkSupport`
-    - `hasLights`
-    - `needsView`
-    - `einkPlatform`
-    - `properties`
+4. **`EventReceiverContractTest`** (in `org.koreader.launcher`)
+    Robolectric; verifies `EventReceiver` registers the expected broadcast actions.
 
-5. `LuaInterfaceContractTest`
-    Reflection-based test that freezes the current public method surface of `LuaInterface` so the later interface split cannot accidentally drop or rename JNI-exposed methods.
+Note: EPD controller and lights controller mapping tests (`EpdFactorySelectionTest`, `LightsFactorySelectionTest`) and the `DeviceFacadeTest` are deferred to Phase 1, where those factories will be restructured. Adding those tests now would duplicate characterization work that will be discarded.
 
 ### 0.5 — Add JNI contract tests
 
@@ -184,16 +182,20 @@ For this codebase, early refactoring should prefer characterization testing over
 
 ### 0.9 — CI gate before major refactors
 
-Before Phase 1 starts, the following should be runnable and green:
+The unit test suite is green and runs via:
 
-- `./gradlew test`
-- `./gradlew testDebugUnitTest`
-- `./gradlew connectedDebugAndroidTest` or an emulator-scoped equivalent if available
+```
+./gradlew testArm64FdroidDebugUnitTest
+```
 
-If full instrumentation is too expensive for every run, split CI into:
+(The concrete flavor-specific task is required because the project uses ABI × CHANNEL flavor dimensions; the generic `test` task is ambiguous.)
 
-- Required on every PR: unit tests + Robolectric + detekt.
-- Scheduled/nightly: instrumentation smoke suite.
+CI is enforced by `.github/workflows/unit-tests.yml`, which runs on every PR (and can be triggered manually). It uses the standard `ubuntu-latest` runner — no custom Docker image is needed because Robolectric runs entirely on the JVM. The workflow is intended to be a **required status check** on the default branch.
+
+Instrumentation tests (emulator) are deferred. The eventual split:
+
+- **Required on every PR**: unit tests + Robolectric (the workflow above).
+- **Scheduled/nightly**: instrumentation smoke suite once 0.7 is implemented.
 
 ---
 
