@@ -23,8 +23,8 @@ Problems:
 - `EPDFactory` and `LightsFactory` silently fall through to defaults for unrecognised IDs, making mis-configurations hard to detect.
 
 ### LuaInterface / MainActivity
-- `LuaInterface` declares **65 methods** in a single flat interface.
-- `MainActivity` implements all 65 methods *directly*, making it a 500-line God class.
+- `LuaInterface` declares **74 methods** in a single flat interface.
+- `MainActivity` implements all 74 methods *directly*, making it a 500-line God class.
 - The activity also handles: EPD, lights, clipboard, network, battery, permissions, file picker, SAF, orientation, fullscreen, screen timeout, APK updates, haptics, toasts, external app actions, and test activity launch — with no delegation pattern.
 - `ActivityExtensions.kt` adds even more extension functions directly onto `Activity`, further blurring responsibility boundaries.
 
@@ -199,178 +199,97 @@ Instrumentation tests (emulator) are deferred. The eventual split:
 
 ---
 
-## Phase 1 — Device Management Refactor
+## Phase 1 — Device Management Refactor ✅ COMPLETED
 
-*This is a pure black-box refactor. The public API of `Device.kt` must remain identical.*
+*Completed on branch `phase1_refactor_device_subsystem`. The plan below describes the original design intent; actual type names used during implementation differ in several places.*
+
+**Name mapping (plan → actual):**
+
+| Plan name | Actual implementation |
+|---|---|
+| `BuildProperties` | `BuildSnapshot` |
+| `DeviceProfile` | `DeviceDescriptor` |
+| `DeviceQuirks` | `Quirk` (sealed class) |
+| `DeviceId` | `DeviceInfo.Id` (compat shim kept for test assertions) |
+| `EPDInterface` | `EpdDriver` |
+| `LightsInterface` | `BacklightDriver` |
+| `NoOpEPDController` | `FakeEPDController` |
+| `BuildProperties.() -> Boolean` match | `BuildMatch` (declarative data class) |
+
+*`DeviceInfo` was retained as a compatibility shim (providing `DeviceInfo.ID` and `DeviceInfo.Id` enum) to avoid updating all characterisation test assertions. `EPDFactory` and `LightsFactory` were deleted.*
 
 ### 1.1 — Create `DeviceQuirks` and `DeviceProfile` data classes
 
-**New file: `device/DeviceProfile.kt`**
+**New file: `device/DeviceDescriptor.kt`**
 
 ```kotlin
-data class DeviceQuirks(
-    val brokenLifecycle: Boolean = false,
-    val needsWakelocks: Boolean = false,
-    val noLights: Boolean = false,
+data class DeviceDescriptor(
+    val id: String,
+    val match: BuildMatch,
+    val epd: () -> EpdDriver,
+    val lights: (DriverContext) -> BacklightDriver,
+    val quirks: Set<Quirk> = emptySet(),
+    val features: Set<Feature> = emptySet(),
 )
-
-data class DeviceProfile(
-    val id: DeviceId,                       // replaces DeviceInfo.Id
-    val epdController: EPDInterface,
-    val lightsController: LightsInterface,
-    val hasColorScreen: Boolean = false,
-    val quirks: DeviceQuirks = DeviceQuirks(),
-) {
-    companion object {
-        /** Returned for any unrecognised/generic Android device. */
-        fun unknown() = DeviceProfile(
-            id = DeviceId.NONE,
-            epdController = NoOpEPDController(),
-            lightsController = GenericController(),
-        )
-    }
-}
 ```
 
-`DeviceId` is the existing `DeviceInfo.Id` enum moved to its own file with the same values — a pure mechanical rename to decouple it from the old singleton.
+EPD drivers are `() -> EpdDriver`; backlight drivers are `(DriverContext) -> BacklightDriver` (context supplies `applicationContext` and `window`).
 
-### 1.2 — Create `BuildProperties` (replaces the property-reading side of `DeviceInfo`)
+### 1.2 — Create `BuildSnapshot` (replaces the property-reading side of `DeviceInfo`)
 
-**New file: `device/BuildProperties.kt`**
+**New file: `device/BuildSnapshot.kt`**
 
-A plain `object` that reads and lowercases `Build.*` fields exactly as `DeviceInfo.init` does today. No state-mutation; all properties are `val` computed at class-load time. Logging of the six fields stays here.
-
-```kotlin
-internal object BuildProperties {
-    val manufacturer: String = lowerCase(Build.MANUFACTURER)
-    val brand: String        = lowerCase(Build.BRAND)
-    val model: String        = lowerCase(Build.MODEL)
-    val device: String       = lowerCase(Build.DEVICE)
-    val product: String      = lowerCase(Build.PRODUCT)
-    val hardware: String     = lowerCase(Build.HARDWARE)
-
-    /** Human-readable summary for `Device.properties` — same format as before. */
-    val summary: String get() = "$manufacturer;$brand;$model;$device;$product;$hardware"
-}
-```
+A plain data class with a companion `fromBuild()` factory that reads and lowercases `Build.*` fields. The `current` lazy singleton is available for production convenience; tests call `fromBuild()` directly to get a fresh read after setting `Build.*` via reflection.
 
 ### 1.3 — Create `DeviceRegistry`
 
 **New file: `device/DeviceRegistry.kt`**
 
-This is the heart of the refactor. It replaces `DeviceInfo`'s detection logic, `EPDFactory`, and `LightsFactory` in a **single place**.
-
-Each entry in the registry is a `DeviceEntry`:
-
-```kotlin
-private class DeviceEntry(
-    val id: DeviceId,
-    val match: BuildProperties.() -> Boolean,   // predicate evaluated against build props
-    val epd: () -> EPDInterface,
-    val lights: () -> LightsInterface,
-    val hasColorScreen: Boolean = false,
-    val quirks: DeviceQuirks = DeviceQuirks(),
-)
-```
-
-`DeviceRegistry.detect()` iterates the list, calls `match()` on `BuildProperties`, and on first hit constructs and returns a `DeviceProfile`. If no entry matches, it returns `DeviceProfile.unknown()`.
-
-Example entries (illustrating the consolidated format):
-
-```kotlin
-// ---- Boyue ----
-DeviceEntry(
-    id = DeviceId.BOYUE_T61,
-    match = { isBoyue && (product.startsWith("t61") || model == "rk30sdk") && device.startsWith("t61") },
-    epd = ::RK3026EPDController,
-    lights = ::GenericController,
-),
-DeviceEntry(
-    id = DeviceId.BOYUE_C64P,
-    match = { brand == "c64p" && product == "c64p" },
-    epd = ::RK3368EPDController,
-    lights = ::GenericController,
-),
-
-// ---- Onyx Poke 2 (broken lifecycle quirk) ----
-DeviceEntry(
-    id = DeviceId.ONYX_POKE2,
-    match = { manufacturer == "onyx" && product == "poke2" },
-    epd = ::OnyxEPDController,
-    lights = ::OnyxWarmthController,
-    quirks = DeviceQuirks(brokenLifecycle = true),
-),
-
-// ---- Sony RP1 (needs wakelocks, no lights) ----
-DeviceEntry(
-    id = DeviceId.SONY_RP1,
-    match = { manufacturer == "sony" && model == "dpt-rp1" },
-    epd = ::NookEPDController,
-    lights = ::GenericController,
-    quirks = DeviceQuirks(needsWakelocks = true, noLights = true),
-),
-
-// ---- Onyx Nova 3 Color (color screen) ----
-DeviceEntry(
-    id = DeviceId.ONYX_NOVA3_COLOR,
-    match = { manufacturer == "onyx" && model == "nova3color" },
-    epd = ::OnyxEPDController,
-    lights = ::OnyxWarmthController,
-    hasColorScreen = true,
-),
-```
-
-Every device's full specification now lives in **one entry** — no cross-file synchronisation.
+`detect(snapshot)` walks a `List<DeviceDescriptor>` in declaration order and returns the first entry whose `BuildMatch` matches. If none match, returns `unknown` (id=`"NONE"`, `FakeEPDController`, `GenericController`, `Feature.ColorScreen`).
 
 ### 1.4 — Refactor `Device.kt`
 
-`Device` calls `DeviceRegistry.detect()` once in its constructor and holds the resulting `DeviceProfile`. All properties are derived from the profile:
-
 ```kotlin
 class Device(activity: Activity) {
-    private val profile: DeviceProfile = DeviceRegistry.detect()
+    private val descriptor = DeviceRegistry.detect(BuildSnapshot.fromBuild())
 
-    val epd: EPDInterface     = profile.epdController
-    val lights: LightsInterface = profile.lightsController
+    val epd: EpdDriver = descriptor.epd()
+    val lights: BacklightDriver = descriptor.lights(
+        DriverContext(context = activity.applicationContext, window = activity.window)
+    )
 
-    val product: String       = BuildProperties.product
-    val hasColorScreen: Boolean = profile.hasColorScreen
-    val needsWakelocks: Boolean = profile.quirks.needsWakelocks
-    val bugLifecycle: Boolean   = profile.quirks.brokenLifecycle
+    val hasColorScreen: Boolean = descriptor.hasColorScreen
+    val needsWakelocks: Boolean = descriptor.needsWakelocks
+    val bugLifecycle: Boolean   = descriptor.hasBrokenLifecycle
 
-    val hasEinkSupport: Boolean  = epd.getPlatform() != "none"
-    val hasFullEinkSupport: Boolean = epd.getMode() == "all"
+    val hasEinkSupport: Boolean     = epd.platform != "none"
+    val hasFullEinkSupport: Boolean = epd.mode == "all"
+    val einkPlatform: String        = epd.platform
 
     val hasLights: Boolean = when (activity.platform) {
-        "android" -> !profile.quirks.noLights
+        "android" -> descriptor.hasLights
         else -> false
     }
     val needsView: Boolean = when (activity.platform) {
         "android_tv", "chrome" -> true
-        else -> epd.needsView()
+        else -> epd.needsView
     }
-    val einkPlatform: String = epd.getPlatform()
-    val properties: String   = BuildProperties.summary
+    val properties: String get() = BuildSnapshot.fromBuild().let {
+        "${it.manufacturer};${it.brand};${it.model};${it.device};${it.product};${it.hardware}"
+    }
 }
 ```
 
-The public API is **byte-for-byte identical** to the current `Device.kt` — `MainActivity` requires zero changes.
-
 ### 1.5 — Delete legacy files
 
-Once all usages compile against the new structure, delete:
-- `device/DeviceInfo.kt`
-- `device/EPDFactory.kt`
-- `device/LightsFactory.kt`
+Deleted: `device/EPDFactory.kt`, `device/LightsFactory.kt`, `device/LightsInterface.kt`, `device/EPDInterface.kt`, `device/deviceOld/` package.
 
-`DeviceId.kt` (new) contains the renamed enum. `BuildProperties.kt` replaces the build-field-reading side of `DeviceInfo`.
+Retained as compat shim: `device/DeviceInfo.kt` (provides `DeviceInfo.Id` enum and `DeviceInfo.ID` for test assertions).
 
 ### 1.6 — Validation
 
-- Run `./gradlew assembleDebug` — must succeed with zero errors.
-- Run `./gradlew detekt` — address any new findings.
-- Manual smoke test: `TestActivity` EPD/lights tests exercise the controllers.
-- Verify log output: `DeviceRegistry` should log the matched device id and controller names at `INFO` level (same information as today, just from one place).
+- Build: **BUILD SUCCESSFUL**
+- Unit tests: **all passing**
 
 ---
 
@@ -429,7 +348,7 @@ interface LuaInterface :
 
 ### 2.4 — Add `@WorkerThread` to sub-interfaces
 
-Each sub-interface inherits `@WorkerThread` from the composed `LuaInterface`. This is already the implied contract; making it explicit per-interface allows Lint to enforce it for each domain independently.
+Annotate each sub-interface with `@WorkerThread` explicitly. Java/Kotlin annotations on an interface are not automatically inherited by sub-interfaces (`@WorkerThread` is not `@Inherited`), so each must carry it independently. This makes the threading contract auditable per domain, and allows Lint to enforce it at the sub-interface level rather than only at `LuaInterface`.
 
 ---
 
@@ -441,19 +360,19 @@ Each sub-interface inherits `@WorkerThread` from the composed `LuaInterface`. Th
 
 **`launcher/manager/EinkManager.kt`**
 
-Owns a reference to `device.epd` and `view` (passed in). Implements `EinkLuaInterface`:
+Owns a reference to `device.epd` (type `EpdDriver`) and `view` (passed in). Implements `EinkLuaInterface`:
 
 ```kotlin
 class EinkManager(
-    private val epd: EPDInterface,
+    private val epd: EpdDriver,
     private val viewProvider: () -> View?,
 ) : EinkLuaInterface {
     override fun einkUpdate(mode: Int) { ... }
     override fun einkUpdate(mode: Int, delay: Long, x: Int, y: Int, width: Int, height: Int) { ... }
     override fun getEinkConstants(): String { ... }
-    override fun getEinkPlatform(): String = epd.getPlatform()
-    override fun isEink(): Boolean = epd.getPlatform() != "none"
-    override fun isEinkFull(): Boolean = epd.getMode() == "all"
+    override fun getEinkPlatform(): String = epd.platform
+    override fun isEink(): Boolean = epd.platform != "none"
+    override fun isEinkFull(): Boolean = epd.mode == "all"
 }
 ```
 
@@ -469,7 +388,7 @@ override fun einkUpdate(mode: Int) = einkManager.einkUpdate(mode)
 
 **`launcher/manager/LightsManager.kt`**
 
-Wraps `device.lights` and `LightDialog`. Implements `LightsLuaInterface`. Receives an `Activity` reference via a lambda (avoids holding a strong reference beyond call scope).
+Wraps `device.lights` (type `BacklightDriver`) and `LightDialog`. Implements `LightsLuaInterface`. Receives an `Activity` reference via a lambda (avoids holding a strong reference beyond call scope).
 
 ### 3.3 — Create `ScreenManager`
 
