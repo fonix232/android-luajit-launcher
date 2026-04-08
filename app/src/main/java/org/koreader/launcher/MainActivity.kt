@@ -341,7 +341,7 @@ class MainActivity : NativeActivity(), LuaInterface,
     }
 
     override fun enableFrontlightSwitch(): Boolean {
-        return device.lights.enableFrontlightSwitch(this) == 1
+        return device.lights.enableFrontlight() == 1
     }
 
     override fun extractAssets(): Boolean {
@@ -385,14 +385,14 @@ class MainActivity : NativeActivity(), LuaInterface,
 
     override fun getEinkConstants(): String {
         return String.format(Locale.US, "%d;%d;%d;%d;%d;%d;%d;%d",
-            device.epd.getWaveformFull(),
-            device.epd.getWaveformPartial(),
-            device.epd.getWaveformFullUi(),
-            device.epd.getWaveformPartialUi(),
-            device.epd.getWaveformFast(),
-            device.epd.getWaveformDelay(),
-            device.epd.getWaveformDelayUi(),
-            device.epd.getWaveformDelayFast())
+            device.epd.waveformFull,
+            device.epd.waveformPartial,
+            device.epd.waveformFullUi,
+            device.epd.waveformPartialUi,
+            device.epd.waveformFast,
+            device.epd.waveformDelay,
+            device.epd.waveformDelayUi,
+            device.epd.waveformDelayFast)
     }
 
     override fun getEinkPlatform(): String {
@@ -451,7 +451,7 @@ class MainActivity : NativeActivity(), LuaInterface,
     }
 
     override fun getScreenBrightness(): Int {
-        return device.lights.getBrightness(this)
+        return device.lights.getBrightness()
     }
 
     override fun getScreenHeight(): Int {
@@ -470,19 +470,19 @@ class MainActivity : NativeActivity(), LuaInterface,
     }
 
     override fun getScreenMaxBrightness(): Int {
-        return device.lights.getMaxBrightness()
+        return device.lights.maxBrightness
     }
 
     override fun getScreenMinBrightness(): Int {
-        return device.lights.getMinBrightness()
+        return device.lights.minBrightness
     }
 
     override fun getScreenMaxWarmth(): Int {
-        return device.lights.getMaxWarmth()
+        return device.lights.maxWarmth
     }
 
     override fun getScreenMinWarmth(): Int {
-        return device.lights.getMinWarmth()
+        return device.lights.minWarmth
     }
 
     override fun getScreenOrientation(): Int {
@@ -490,7 +490,7 @@ class MainActivity : NativeActivity(), LuaInterface,
     }
 
     override fun getScreenWarmth(): Int {
-        return device.lights.getWarmth(this)
+        return device.lights.getWarmth()
     }
 
     override fun getScreenWidth(): Int {
@@ -543,7 +543,7 @@ class MainActivity : NativeActivity(), LuaInterface,
     }
 
     override fun hasStandaloneWarmth(): Boolean {
-        return device.lights.hasStandaloneWarmth()
+        return device.lights.hasStandaloneWarmth
     }
 
     override fun hasRuntimeChanges(): Boolean {
@@ -621,7 +621,7 @@ class MainActivity : NativeActivity(), LuaInterface,
     }
 
     override fun isWarmthDevice(): Boolean {
-        return device.lights.hasWarmth()
+        return device.lights.hasWarmth
     }
 
     override fun needsWakelocks(): Boolean {
@@ -714,7 +714,7 @@ class MainActivity : NativeActivity(), LuaInterface,
     }
 
     override fun setScreenBrightness(brightness: Int) {
-        device.lights.setBrightness(this, brightness)
+        device.lights.setBrightness(brightness)
     }
 
     override fun setScreenOffTimeout(ms: Int) {
@@ -726,7 +726,7 @@ class MainActivity : NativeActivity(), LuaInterface,
     }
 
     override fun setScreenWarmth(warmth: Int) {
-        device.lights.setWarmth(this, warmth)
+        device.lights.setWarmth(warmth)
     }
 
     override fun showFrontlightDialog(title: String, dim: String, warmth: String,
