@@ -10,7 +10,7 @@ import android.widget.LinearLayout
 import android.widget.RelativeLayout
 import android.widget.SeekBar
 import android.widget.TextView
-import org.koreader.launcher.device.LightsInterface
+import org.koreader.launcher.driver.BacklightDriver
 
 class LightDialog {
 
@@ -25,14 +25,14 @@ class LightDialog {
 
     fun show(
         activity: Activity,
-        controller: LightsInterface,
+        controller: BacklightDriver,
         title: String,
         dim: String,
         warmth: String,
         okButton: String,
         cancelButton: String
     ) {
-        val hasWarmth = controller.hasWarmth()
+        val hasWarmth = controller.hasWarmth
         state = LIGHT_DIALOG_OPENED
         activity.runOnUiThread {
             val divider = View(activity)
@@ -49,13 +49,13 @@ class LightDialog {
             dimText.text = dim
             dimText.gravity = Gravity.CENTER_HORIZONTAL
             dimText.textSize = 18f
-            dimSeekBar.max = controller.getMaxBrightness()
-            dimSeekBar.progress = controller.getBrightness(activity)
+            dimSeekBar.max = controller.maxBrightness
+            dimSeekBar.progress = controller.getBrightness()
             dimSeekBar.setOnSeekBarChangeListener(object: SeekBar.OnSeekBarChangeListener {
                 override fun onStartTrackingTouch(p0: SeekBar?) {}
                 override fun onStopTrackingTouch(p0: SeekBar?) {}
                 override fun onProgressChanged(p0: SeekBar?, p1: Int, p2: Boolean) {
-                    controller.setBrightness(activity, p1)
+                    controller.setBrightness(p1)
                 }
             })
             val linearLayout = LinearLayout(activity)
@@ -75,13 +75,13 @@ class LightDialog {
                 warmthText.text = warmth
                 warmthText.gravity = Gravity.CENTER_HORIZONTAL
                 warmthText.textSize = 18f
-                warmthSeekBar.max = controller.getMaxWarmth()
-                warmthSeekBar.progress = controller.getWarmth(activity)
+                warmthSeekBar.max = controller.maxWarmth
+                warmthSeekBar.progress = controller.getWarmth()
                 warmthSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onStartTrackingTouch(p0: SeekBar?) {}
                     override fun onStopTrackingTouch(p0: SeekBar?) {}
                     override fun onProgressChanged(p0: SeekBar?, p1: Int, p2: Boolean) {
-                        controller.setWarmth(activity, p1)
+                        controller.setWarmth(p1)
                     }
                 })
                 linearLayout.addView(warmthText)

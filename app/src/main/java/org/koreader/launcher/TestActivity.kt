@@ -9,35 +9,37 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import java.io.*
 import org.koreader.launcher.databinding.TestBinding
+import org.koreader.launcher.device.BuildSnapshot
 import org.koreader.launcher.device.Device
 import org.koreader.launcher.device.DeviceInfo
-import org.koreader.launcher.device.EPDInterface
-import org.koreader.launcher.device.LightsInterface
-import org.koreader.launcher.device.epd.NGL4EPDController
-import org.koreader.launcher.device.epd.OnyxEPDController
-import org.koreader.launcher.device.epd.RK3026EPDController
-import org.koreader.launcher.device.epd.RK3368EPDController
-import org.koreader.launcher.device.epd.RK3566EPDController
-import org.koreader.launcher.device.epd.TolinoEPDController
-import org.koreader.launcher.device.lights.OnyxAdbLightsController
-import org.koreader.launcher.device.lights.OnyxC67Controller
-import org.koreader.launcher.device.lights.OnyxColorController
-import org.koreader.launcher.device.lights.OnyxSdkLightsController
-import org.koreader.launcher.device.lights.OnyxWarmthController
-import org.koreader.launcher.device.lights.OnyxPalma2ProController
-import org.koreader.launcher.device.lights.TolinoRootController
-import org.koreader.launcher.device.lights.TolinoNtxController
-import org.koreader.launcher.device.lights.TolinoNtxNoWarmthController
-import org.koreader.launcher.device.lights.TolinoB300Controller
-import org.koreader.launcher.device.lights.BoyueS62RootController
+import org.koreader.launcher.driver.BacklightDriver
+import org.koreader.launcher.driver.DriverContext
+import org.koreader.launcher.driver.EpdDriver
+import org.koreader.launcher.driver.epd.NGL4EPDController
+import org.koreader.launcher.driver.epd.OnyxEPDController
+import org.koreader.launcher.driver.epd.RK3026EPDController
+import org.koreader.launcher.driver.epd.RK3368EPDController
+import org.koreader.launcher.driver.epd.RK3566EPDController
+import org.koreader.launcher.driver.epd.TolinoEPDController
+import org.koreader.launcher.driver.light.OnyxAdbLightsController
+import org.koreader.launcher.driver.light.OnyxC67Controller
+import org.koreader.launcher.driver.light.OnyxColorController
+import org.koreader.launcher.driver.light.OnyxSdkLightsController
+import org.koreader.launcher.driver.light.OnyxWarmthController
+import org.koreader.launcher.driver.light.OnyxPalma2ProController
+import org.koreader.launcher.driver.light.TolinoRootController
+import org.koreader.launcher.driver.light.TolinoNtxController
+import org.koreader.launcher.driver.light.TolinoNtxNoWarmthController
+import org.koreader.launcher.driver.light.TolinoB300Controller
+import org.koreader.launcher.driver.light.BoyueS62RootController
 import org.koreader.launcher.dialog.LightDialog
 import org.koreader.launcher.dialog.ToolTip
 
 class TestActivity: AppCompatActivity() {
     private val tag = this::class.java.simpleName
 
-    private val epdMap = HashMap<String, EPDInterface>()
-    private val lightsMap = HashMap<String, LightsInterface>()
+    private val epdMap = HashMap<String, EpdDriver>()
+    private val lightsMap = HashMap<String, BacklightDriver>()
     private val reportPath = String.format("%s%s%s", MainApp.storage_path, File.separator, "test.log")
 
     private lateinit var binding: TestBinding
@@ -55,15 +57,17 @@ class TestActivity: AppCompatActivity() {
         setContentView(binding.root)
         Log.i(tag, MARKER_BEGIN)
         device = Device(this)
-        supported = device.epd.getPlatform() != "none" || device.lights.getPlatform() != "generic"
+        supported = device.hasEinkSupport || device.lights.platform != "generic"
 
         if (supported) {
             binding.currentState.append("Device already supported\n")
-            binding.currentState.append("EPD: ${device.epd.getPlatform()}\n")
-            binding.currentState.append("Lights: ${device.lights.getPlatform()}\n")
+            binding.currentState.append("EPD: ${device.einkPlatform}\n")
+            binding.currentState.append("Lights: ${device.lights.platform}\n")
         } else {
             binding.currentState.append("Unsupported device\n")
         }
+
+        val driverCtx = DriverContext(context = applicationContext, window = window)
 
         // EPD drivers
         epdMap["Freescale/NTX"] = TolinoEPDController()
@@ -74,25 +78,25 @@ class TestActivity: AppCompatActivity() {
         epdMap["Rockchip RK3566"] = RK3566EPDController()
 
         // Lights drivers
-        lightsMap["Boyue S62 Root"] = BoyueS62RootController()
-        lightsMap["Onyx ADB (lights)"] = OnyxAdbLightsController()
-        lightsMap["Onyx C67"] = OnyxC67Controller()
-        lightsMap["Onyx Color"] = OnyxColorController()
-        lightsMap["Onyx SDK (lights)"] = OnyxSdkLightsController()
-        lightsMap["Onyx (warmth)"] = OnyxWarmthController()
-        lightsMap["Onyx Palma2 Pro"] = OnyxPalma2ProController()
-        lightsMap["Tolino Root"] = TolinoRootController()
-        lightsMap["Tolino Ntx"] = TolinoNtxController()
-        lightsMap["Tolino Ntx (no warmth)"] = TolinoNtxNoWarmthController()
-        lightsMap["Tolino B300"] = TolinoB300Controller()
+        lightsMap["Boyue S62 Root"] = BoyueS62RootController(driverCtx)
+        lightsMap["Onyx ADB (lights)"] = OnyxAdbLightsController(driverCtx)
+        lightsMap["Onyx C67"] = OnyxC67Controller(driverCtx)
+        lightsMap["Onyx Color"] = OnyxColorController(driverCtx)
+        lightsMap["Onyx SDK (lights)"] = OnyxSdkLightsController(driverCtx)
+        lightsMap["Onyx (warmth)"] = OnyxWarmthController(driverCtx)
+        lightsMap["Onyx Palma2 Pro"] = OnyxPalma2ProController(driverCtx)
+        lightsMap["Tolino Root"] = TolinoRootController(driverCtx)
+        lightsMap["Tolino Ntx"] = TolinoNtxController(driverCtx)
+        lightsMap["Tolino Ntx (no warmth)"] = TolinoNtxNoWarmthController(driverCtx)
+        lightsMap["Tolino B300"] = TolinoB300Controller(driverCtx)
 
         // Device ID
-        binding.info.append("Manufacturer: ${DeviceInfo.MANUFACTURER}\n")
-        binding.info.append("Brand: ${DeviceInfo.BRAND}\n")
-        binding.info.append("Model: ${DeviceInfo.MODEL}\n")
-        binding.info.append("Device: ${DeviceInfo.DEVICE}\n")
-        binding.info.append("Product: ${DeviceInfo.PRODUCT}\n")
-        binding.info.append("Hardware: ${DeviceInfo.HARDWARE}\n")
+        binding.info.append("Manufacturer: ${BuildSnapshot.current.manufacturer}\n")
+        binding.info.append("Brand: ${BuildSnapshot.current.brand}\n")
+        binding.info.append("Model: ${BuildSnapshot.current.model}\n")
+        binding.info.append("Device: ${BuildSnapshot.current.device}\n")
+        binding.info.append("Product: ${BuildSnapshot.current.product}\n")
+        binding.info.append("Hardware: ${BuildSnapshot.current.hardware}\n")
 
         try {
             Class.forName("android.os.SystemProperties").getMethod(

@@ -1,41 +1,48 @@
 package org.koreader.launcher.device
 
 import android.app.Activity
+import org.koreader.launcher.driver.BacklightDriver
+import org.koreader.launcher.driver.DriverContext
+import org.koreader.launcher.driver.EpdDriver
 import org.koreader.launcher.extensions.platform
 
 class Device(activity: Activity) {
-    val epd = EPDFactory.epdController
-    val lights = LightsFactory.lightsController
+
+    private val descriptor = DeviceRegistry.detect(BuildSnapshot.fromBuild())
+
+    val epd: EpdDriver = descriptor.epd()
+    val lights: BacklightDriver = descriptor.lights(
+        DriverContext(
+            context = activity.applicationContext,
+            window  = activity.window,
+        )
+    )
 
     @Suppress("unused")
-    val product = DeviceInfo.PRODUCT
-    val needsWakelocks = DeviceInfo.QUIRK_NEEDS_WAKELOCKS
-    val bugLifecycle = DeviceInfo.QUIRK_BROKEN_LIFECYCLE
-    val hasColorScreen = DeviceInfo.HAS_COLOR_SCREEN
+    val product = BuildSnapshot.current.product
 
-    val hasEinkSupport = epd.getPlatform() != "none"
-    val hasFullEinkSupport = epd.getMode() == "all"
+    val needsWakelocks = descriptor.needsWakelocks
+    val bugLifecycle = descriptor.hasBrokenLifecycle
+    val hasColorScreen = descriptor.hasColorScreen
+
+    val hasEinkSupport = epd.platform != "none"
+    val hasFullEinkSupport = epd.mode == "all"
 
     val hasLights = when (activity.platform) {
-        "android" -> !DeviceInfo.QUIRK_NO_LIGHTS
+        "android" -> descriptor.hasLights
         else -> false
     }
 
     val needsView = when (activity.platform) {
         "android_tv" -> true
         "chrome" -> true
-        else -> epd.needsView()
+        else -> epd.needsView
     }
 
-    val einkPlatform = epd.getPlatform()
+    val einkPlatform = epd.platform
 
     val properties: String
-      get() = String.format("%s;%s;%s;%s;%s;%s",
-          DeviceInfo.MANUFACTURER,
-          DeviceInfo.BRAND,
-          DeviceInfo.MODEL,
-          DeviceInfo.DEVICE,
-          DeviceInfo.PRODUCT,
-          DeviceInfo.HARDWARE,
-      )
+        get() = BuildSnapshot.current.let {
+            "${it.manufacturer};${it.brand};${it.model};${it.device};${it.product};${it.hardware}"
+        }
 }
